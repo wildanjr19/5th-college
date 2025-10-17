@@ -1,4 +1,8 @@
 # Tugas Spasial Autokorelasi
+# Data : Presentase Kemiskinan Kab/Kota Provinsi Jawa Tengah 2024
+# Shap File : gadm_idn
+
+
 # library
 library(terra)
 library(sf)
@@ -51,7 +55,7 @@ mp <- moran.plot(as.vector(scale(jateng_sf$kemiskinan)), lw)
 
 # Hitung local Moran
 kemiskinan_num <- as.numeric(unlist(jateng_sf$kemiskinan))
-# Hitung local Moran
+
 loc_moran <- localmoran(kemiskinan_num, lw, alternative = "greater")
 head(loc_moran)
 
