@@ -1,0 +1,233 @@
+---
+title: "Project Autokorelasi Spasial Kemiskinan Di Provinsi Jawa Tengah Tahun 2024 "
+author: "Abdul Rosyid | Khrisna Putri | Nadya Nazaha | Vincentius A | Wildan A"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+---
+# Library
+```{r}
+library(sf)
+library(spdep)
+library(cols4all)
+library(terra)
+library(dplyr)
+library(readxl)
+library(tmap) 
+library(cols4all)
+
+```
+
+# Penyiapan Data Tabular dan Data Spasial
+```{r}
+# import data kemiskinan
+data <- read_excel("data/Presentase-Kemiskinan-Jawa-Tengah-2024.xlsx")
+
+# import file shp
+shap_indo <- st_read("gadm41_IDN_shp/gadm41_IDN_2.shp")
+
+# filter untuk jawa tengah saja
+jateng_shp <- shap_indo %>%
+  filter(NAME_1 == "Jawa Tengah")
+# hapus baris 34 karena tidak teridentifikasi
+jateng_shp <- jateng_shp[-34, ]
+row.names(jateng_shp) <- NULL
+
+# kemiskinan
+kemiskinan_vector <- data[[2]][1:35]
+
+# Gabungkan data ke objek sf
+jateng_sf <- jateng_shp
+jateng_sf$kemiskinan <- kemiskinan_vector
+
+```
+
+# Peta Sebaran Kemiskinan
+```{r}
+kemiskinan_map <- tm_shape(jateng_sf) +
+  tm_fill(
+    "kemiskinan",
+    fill.scale = tm_scale_continuous(
+      values = "brewer.yl_or_rd",
+      n = 9 
+    ),
+    fill.legend = tm_legend(title = "Kemiskinan")
+  ) +
+  tm_borders(col = 'black', lwd = 0.5) +
+  tm_title("Kemiskinan di Jawa Tengah") +
+  tm_layout(legend.outside = TRUE)
+kemiskinan_map
+```
+
+# Analisis Autokorelasi Spasial
+## Matriks Bobot Spasial
+```{r}
+# import file shp
+nb <- poly2nb(jateng_sf)
+lw <- nb2listw(nb, style = "W") # weight list
+```
+## Autokorelasi Spasial Global
+```{r}
+# Uji autokorelasi spasial global
+nb <- poly2nb(jateng_sf, queen = TRUE)
+lw <- nb2listw(nb, style = "W")
+
+moran.test(jateng_sf$kemiskinan, lw)
+```
+
+## Autokorelasi Spasial Lokal
+### Nilai Moran's Lokal
+```{r}
+# Hitung local Moran's I
+kemiskinan_num <- as.numeric(unlist(jateng_sf$kemiskinan))
+
+loc_moran <- localmoran(kemiskinan_num, lw, alternative = "greater")
+loc_moran
+```
+
+### Moran's Plot (Identifikasi Outllier)
+```{r}
+# Plot Moran's
+mp <- moran.plot(as.vector(scale(jateng_sf$kemiskinan)), lw)
+```
+
+### Morans' Plot (Full)
+```{r}
+# Buat objek yang akan diplot
+x <- as.vector(scale(jateng_sf$kemiskinan))
+lag_x <- lag.listw(lw, x)
+
+# Plot dasar Moran
+plot(x, lag_x,
+     xlab = "Kemiskinan (standardized)",
+     ylab = "Spatial Lag",
+     main = "Moran's Scatterplot")
+
+# Tambahkan garis bantu
+abline(h = 0, v = 0, lty = 2)
+abline(lm(lag_x ~ x), col = "blue")
+
+# Tambahkan label nomor wilayah
+text(x, lag_x, labels = 1:length(x), pos = 3, cex = 0.8, col = "darkred")
+```
+
+### Tambahkan Nilai Local Moran ke Data
+```{r}
+jateng_sf$lmI <- loc_moran[, "Ii"]
+jateng_sf$lmZ <- loc_moran[, "Z.Ii"]
+jateng_sf$lmp <- loc_moran[, "Pr(z > E(Ii))"]
+```
+
+# Peta
+```{r}
+tmap_mode("plot")
+```
+
+# Peta Local Moran's I
+```{r}
+loc_moran_map <- tm_shape(jateng_sf) +
+  tm_polygons(
+    fill = "lmI",
+    fill.scale = tm_scale_intervals(
+      style = "quantile",
+      values = "brewer.greens",
+      midpoint = NA
+    ),
+    fill.legend = tm_legend(title = "Local Moran's I")
+  ) +
+  tm_layout(legend.outside = TRUE) +
+  tm_title("Peta Local Moran's")
+loc_moran_map
+```
+
+# Peta Z-score
+```{r}
+zscore_map <- tm_shape(jateng_sf) +
+  tm_polygons(
+    fill = "lmZ",
+    fill.scale = tm_scale_intervals(
+      breaks = c(-Inf, 1.65, Inf),
+      labels = c("Tidak Signifikan", "Signifikan"),
+      values = c("grey80", "goldenrod"),
+      midpoint = NA
+    ),
+    fill.legend = tm_legend(title = "Z-score")
+  )+
+  tm_layout(legend.outside = TRUE) +
+  tm_title("Peta Z-Score")
+zscore_map
+```
+
+# Peta p-value
+```{r}
+pvalue_map <- tm_shape(jateng_sf) +
+  tm_polygons(
+    fill = "lmp",
+    fill.scale = tm_scale_intervals(
+      breaks = c(-Inf, 0.05, Inf),
+      labels = c("Signifikan", "Tidak Signifikan"),
+      values = c("purple", "grey80"),
+      midpoint = NA
+    ),
+    fill.legend = tm_legend(title = "p-value")
+  )+
+  tm_layout(legend.outside = TRUE) + 
+  tm_title("Peta P-Value")
+pvalue_map
+```
+
+# Gabungkan Semua Map
+```{r}
+tmap_arrange(kemiskinan_map, loc_moran_map, zscore_map, pvalue_map)
+```
+
+# Kluster Untuk Kuadran
+```{r}
+jateng_sf$quadrant <- NA
+
+# High-High: x ≥ 0, wx ≥ 0, dan signifikan
+jateng_sf[(mp$x >= 0 & mp$wx >= 0) & (jateng_sf$lmp <= 0.05), "quadrant"] <- 1
+
+# Low-Low: x ≤ 0, wx ≤ 0, dan signifikan  
+jateng_sf[(mp$x <= 0 & mp$wx <= 0) & (jateng_sf$lmp <= 0.05), "quadrant"] <- 2
+
+# High-Low: x ≥ 0, wx ≤ 0, dan signifikan
+jateng_sf[(mp$x >= 0 & mp$wx <= 0) & (jateng_sf$lmp <= 0.05), "quadrant"] <- 3
+
+# Low-High: x ≤ 0, wx ≥ 0, dan signifikan
+jateng_sf[(mp$x <= 0 & mp$wx >= 0) & (jateng_sf$lmp <= 0.05), "quadrant"] <- 4
+
+# Non-significant: p-value > 0.05
+jateng_sf[jateng_sf$lmp > 0.05, "quadrant"] <- 5
+
+# Verifikasi hasil
+cat("Distribusi quadrant:\n")
+table(jateng_sf$quadrant, useNA = "always")
+```
+
+# Peta Cluster Quadrant
+```{r}
+p_quadrant <- tm_shape(jateng_sf) +
+  tm_polygons(
+    fill = "quadrant",
+    fill.scale = tm_scale_intervals(
+      breaks = c(1, 2, 3, 4, 5, 6),
+      labels = c("High-High", "Low-Low", "High-Low", "Low-High", "Non-significant"),
+      values = c("red", "blue", "lightpink", "skyblue2", "white")
+      ),
+    fill.legend = tm_legend(title = "")
+  ) +
+  tm_borders(fill_alpha = 0.5) +          
+  tm_title("Spatial Clusters of Poverty") +                  
+  tm_layout(frame = FALSE, legend.outside = TRUE)
+p_quadrant
+```
+
+
