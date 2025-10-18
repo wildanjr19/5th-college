@@ -1,0 +1,778 @@
+---
+title: "Tugas 1 PDM - Prediksi Gallstone Status"
+author: "Nama Anda"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: cosmo
+    highlight: tango
+    code_folding: show
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  fig.width = 10,
+  fig.height = 6
+)
+```
+
+# Pendahuluan
+
+Dokumen ini berisi analisis prediksi Gallstone Status menggunakan dua model machine learning:
+
+- **Decision Tree** (tanpa standarisasi)
+- **Logistic Regression** (dengan standarisasi Z-Score)
+
+# Library
+
+```{r library}
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(gridExtra)
+library(corrplot)
+library(caTools)
+library(caret)
+library(MLmetrics)
+library(rpart)
+library(rpart.plot)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(purrr)
+```
+
+# Load Data
+
+```{r load-data}
+data <- read_excel("data/dataset-uci.xlsx")
+
+# Struktur data
+str(data)
+```
+
+# Eksplorasi Data
+
+## Ringkasan Statistik
+
+```{r summary}
+summary(data)
+```
+
+## Cek Missing Values
+
+```{r missing-values}
+missing_values <- sapply(data, function(x) sum(is.na(x)))
+kable(data.frame(Variabel = names(missing_values), 
+                 Missing = missing_values),
+      caption = "Jumlah Missing Values per Variabel") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## Distribusi Variabel Target
+
+```{r target-distribution}
+# Tabel distribusi
+target_table <- table(data$`Gallstone Status`)
+target_prop <- prop.table(target_table) * 100
+
+kable(data.frame(
+  Status = names(target_table),
+  Frekuensi = as.vector(target_table),
+  Persentase = paste0(round(as.vector(target_prop), 2), "%")
+), caption = "Distribusi Gallstone Status") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## Visualisasi Distribusi Variabel Numerik
+
+```{r histogram, fig.height=10}
+# Ambil semua kolom fitur (kecuali target)
+fitur <- data %>%
+  select(-`Gallstone Status`) # Gunakan backtick karena ada spasi
+
+# Ambil nama fitur
+nama_fitur <- names(fitur)
+
+# Histogram (semua variabel fitur sekaligus)
+histogram_list <- nama_fitur %>%
+  map(~ ggplot(data, aes(x = !!sym(.))) + 
+        geom_histogram(bins = 30, fill = "darkblue", color = "white") + 
+        labs(title = paste("Distribusi:", .)) +
+        theme_minimal())
+
+# --- KODE KOREKSI: Gunakan marrangeGrob untuk Halaman ---
+# Menampilkan plot dalam beberapa halaman (misalnya 4 kolom x 5 baris per halaman)
+# 4 * 5 = 20 plot per halaman. Dengan 38 plot, akan ada 2 halaman.
+marrangeGrob(grobs = histogram_list, ncol = 4, nrow = 5)
+```
+
+## Visualisasi Boxplot Semua Variabel Numerik
+
+```{r boxplot, fig.height=10}
+# Boxplot (semua variabel fitur sekaligus)
+boxplot_list <- nama_fitur %>%
+  map(~ ggplot(data, aes(y = !!sym(.))) + # Menggunakan sumbu Y untuk boxplot vertikal
+        geom_boxplot(fill = "darkgreen") + 
+        labs(title = paste("Boxplot:", .), y = .) + # Tambahkan label sumbu Y
+        theme_minimal())
+
+# Menampilkan plot dalam satu halaman (10 fitur dalam 2 kolom dan 5 baris)
+marrangeGrob(grobs = boxplot_list, ncol = 2, nrow = 5)
+```
+
+## Visualisasi Distribusi Salah Satu Variabel Numerik
+
+```{r dist-satu}
+ggplot(data, aes(x = `C-Reactive Protein (CRP)`)) +
+  geom_histogram(bins = 30, fill = "darkred", color = "white") +
+  labs(title = "Distribusi: C-Reactive Protein (CRP)",
+       x = "C-Reactive Protein (CRP) Value") +
+  theme_minimal()
+```
+
+## Visualisasi Boxplot Salah Satu Variabel Numerik
+
+```{r boxplot-satu}
+ggplot(data, aes(y = `C-Reactive Protein (CRP)`)) +
+  geom_boxplot(fill = "lightblue", color = "darkblue") +
+  labs(title = "Boxplot: C-Reactive Protein (CRP)",
+       y = "C-Reactive Protein (CRP) Value") +
+  theme_minimal()
+```
+
+## Analisis Korelasi
+
+### Korelasi Antar Fitur
+
+```{r correlation-matrix}
+# Rubah target ke numeric untuk korelasi
+data$`Gallstone Status` <- as.numeric(data$`Gallstone Status`)
+
+# Ambil hanya fitur tanpa target
+fitur <- data[, -1]
+
+# Hitung matrik korelasi
+korelasi_matriks <- cor(fitur)
+
+# Visualisasi heatmap
+corrplot(korelasi_matriks, 
+         method = "color",
+         type = "lower",
+         order = "hclust",
+         tl.col = "black",
+         tl.srt = 45,
+         tl.cex = 0.5,
+         cl.cex = 0.7,
+         addCoef.col = "grey20",
+         number.cex = 0.5,
+         title = "Heatmap Korelasi Antar Fitur",
+         mar = c(0,0,2,0))
+```
+
+### Korelasi Fitur dengan Target
+
+```{r correlation-target}
+# Korelasi fitur dengan target
+korelasi_target <- cor(data[, -1], data$`Gallstone Status`)
+
+# Rubah ke dataframe agar rapi
+korelasi_target_df <- data.frame(
+  Variabel = rownames(korelasi_target),
+  Korelasi = korelasi_target[, 1]
+)
+
+# Jadikan nilai mutlak lalu urutkan
+korelasi_target_df <- korelasi_target_df %>%
+  arrange(desc(abs(Korelasi)))
+
+# Melihat 10 fitur korelasi tertinggi
+kable(head(korelasi_target_df, 10),
+      caption = "Top 10 Fitur dengan Korelasi Tertinggi terhadap Target",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## Praproses Data
+Praproses data dilakukan pada data bertipe kategorik namun sudah berbentuk numerik termasuk variabel target. Hal ini dilakukan untuk konsistensi dari data, dengan merubah menjadi factor maka data numerik akan dianggap kategorik oleh R
+```{r preprocess-data}
+# variabel Gender
+data$Gender <- as.factor(data$Gender)
+# variabel Comorbidity
+data$Comorbidity <- as.factor(data$Comorbidity)
+# variabel CAD
+data$`Coronary Artery Disease (CAD)` <- as.factor(data$`Coronary Artery Disease (CAD)`)
+# variabel Hypothyriodism
+data$Hypothyroidism <- as.factor(data$Hypothyroidism)
+# variabel Hyperlipidemia
+data$Hyperlipidemia <- as.factor(data$Hyperlipidemia)
+# variabel Diabetes Mellitus
+data$`Diabetes Mellitus (DM)` <- as.factor(data$`Diabetes Mellitus (DM)`)
+
+# cek kembali struktur data
+str(data)
+```
+
+# Data Splitting
+
+```{r data-split}
+# Konversi target ke factor
+data$`Gallstone Status` <- as.factor(data$`Gallstone Status`)
+
+# Atur seed untuk reproduksibilitas
+set.seed(42)
+
+# Buat indeks split (80:20)
+split_index <- sample.split(data$`Gallstone Status`, SplitRatio = 0.80)
+
+# Buat subset data training dan testing
+training_set <- subset(data, split_index == TRUE)
+testing_set <- subset(data, split_index == FALSE)
+
+# Informasi split
+cat("Jumlah baris Training Set:", nrow(training_set), "\n")
+cat("Jumlah baris Testing Set:", nrow(testing_set), "\n")
+
+# Distribusi target di training set
+cat("\nDistribusi Target di Training Set:\n")
+print(prop.table(table(training_set$`Gallstone Status`)))
+
+# Distribusi target di testing set
+cat("\nDistribusi Target di Testing Set:\n")
+print(prop.table(table(testing_set$`Gallstone Status`)))
+```
+
+# Pemodelan
+
+## Model 1: Decision Tree (Tanpa Standarisasi)
+
+### Training Model
+
+```{r dt-model}
+# Bangun model
+model_dt <- rpart(
+  `Gallstone Status` ~ .,
+  data = training_set,
+  method = "class",
+  control = rpart.control(minsplit = 20, cp = 0.01)
+)
+
+# Visualisasi pohon keputusan
+rpart.plot(model_dt, 
+           extra = 104, 
+           fallen.leaves = TRUE, 
+           main = "Decision Tree - Gallstone Status Prediction",
+           box.palette = "RdYlGn")
+```
+
+### Evaluasi pada Data Training
+
+```{r dt-train-evaluation}
+# Prediksi pada training set
+prediksi_kelas_dt_train <- predict(
+  model_dt,
+  newdata = training_set,
+  type = "class"
+)
+
+# Confusion matrix training
+cm_dt_train <- confusionMatrix(
+  data = prediksi_kelas_dt_train,
+  reference = training_set$`Gallstone Status`,
+  positive = "1"
+)
+
+print(cm_dt_train)
+
+# Metrik evaluasi training
+precision_dt_train <- Precision(y_pred = prediksi_kelas_dt_train, 
+                                y_true = training_set$`Gallstone Status`, 
+                                positive = "1")
+
+recall_dt_train <- Recall(y_pred = prediksi_kelas_dt_train, 
+                          y_true = training_set$`Gallstone Status`, 
+                          positive = "1")
+
+f1_dt_train <- F1_Score(y_pred = prediksi_kelas_dt_train, 
+                        y_true = training_set$`Gallstone Status`, 
+                        positive = "1")
+
+# Tampilkan metrik training
+dt_metrics_train <- data.frame(
+  Metrik = c("Accuracy", "Precision", "Recall", "F1 Score"),
+  Nilai = c(cm_dt_train$overall["Accuracy"], precision_dt_train, recall_dt_train, f1_dt_train)
+)
+
+kable(dt_metrics_train, 
+      caption = "Metrik Evaluasi Decision Tree - Training Set",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Evaluasi pada Data Testing
+
+```{r dt-prediction}
+# Prediksi pada test
+prediksi_kelas_dt <- predict(
+  model_dt,
+  newdata = testing_set,
+  type = "class"
+)
+
+# Confusion matrix
+cm_dt <- confusionMatrix(
+  data = prediksi_kelas_dt,
+  reference = testing_set$`Gallstone Status`,
+  positive = "1"
+)
+
+print(cm_dt)
+```
+
+### Metrik Evaluasi Decision Tree - Testing
+
+```{r dt-metrics}
+# Precision
+precision_dt <- Precision(y_pred = prediksi_kelas_dt, 
+                          y_true = testing_set$`Gallstone Status`, 
+                          positive = "1")
+
+# Recall
+recall_dt <- Recall(y_pred = prediksi_kelas_dt, 
+                    y_true = testing_set$`Gallstone Status`, 
+                    positive = "1")
+
+# F1 Score
+f1_dt <- F1_Score(y_pred = prediksi_kelas_dt, 
+                  y_true = testing_set$`Gallstone Status`, 
+                  positive = "1")
+
+# Tampilkan metrik
+dt_metrics <- data.frame(
+  Metrik = c("Accuracy", "Precision", "Recall", "F1 Score"),
+  Nilai = c(cm_dt$overall["Accuracy"], precision_dt, recall_dt, f1_dt)
+)
+
+kable(dt_metrics, 
+      caption = "Metrik Evaluasi Decision Tree - Testing Set",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+## Model 2: Logistic Regression (Dengan Standarisasi Z-Score)
+
+### Standarisasi Data
+
+```{r logreg-scaling}
+# dapatkan variabel kategorikal (tidak akan distandarisasi)
+kolom_kategorikal <- c("Gender", "Comorbidity", "Coronary Artery Disease (CAD)",
+                       "Hypothyroidism", "Hyperlipidemia", "Diabetes Mellitus (DM)")
+target <- "Gallstone Status"
+
+# pastikan kembali variabel kategorikal dan target adalah factor
+for (col in c(kolom_kategorikal, target)) {
+  training_set[[col]] <- factor(training_set[[col]])
+}
+
+# simpan level faktor training agar konsisten dengan testing
+train_lvls <- lapply(training_set[, kolom_kategorikal, drop = FALSE], levels)
+target_lvls <- levels(training_set[[target]])
+
+# standarisasi variabel numerik
+fitur_numerik <- setdiff(names(training_set), c(kolom_kategorikal, target))
+
+# dapatkan parameter standarisasi dari training set numerik
+scaler_logreg <- preProcess(training_set[, fitur_numerik], method = c("center", "scale"))
+
+# terapkan standarisasi pada training numerik dan testing numerik (dengan parameter dari training)
+scaled_training_num <- as_tibble(predict(scaler_logreg, training_set[, fitur_numerik]))
+scaled_testing_num  <- as_tibble(predict(scaler_logreg, testing_set[,  fitur_numerik]))
+```
+
+### Praproses Pada Data yang Telah Distandarisasi
+```{r prepo-standarization-set}
+# gabungkan kembali dengan target sehingga data training utuh
+training_scaled_logreg <- dplyr::bind_cols(
+  training_set[, c(kolom_kategorikal, target)],
+  scaled_training_num
+)
+
+# gabungkan kembali dengan target sehingga data test utuh
+testing_scaled_logreg <- dplyr::bind_cols(
+  testing_set[, c(kolom_kategorikal, target)],
+  scaled_testing_num
+)
+
+# menyamakan level kategori antara data training dan testing
+for (col in kolom_kategorikal) {
+  # training
+  training_scaled_logreg[[col]] <- factor(training_scaled_logreg[[col]], levels = train_lvls[[col]])
+  # testing (menggunakan level train yang telah disimpan)
+  testing_scaled_logreg[[col]]  <- factor(testing_scaled_logreg[[col]],  levels = train_lvls[[col]])
+}
+
+training_scaled_logreg[[target]] <- factor(training_scaled_logreg[[target]], levels = target_lvls)
+testing_scaled_logreg[[target]]  <- factor(testing_scaled_logreg[[target]],  levels = target_lvls)
+```
+
+#### Verifikasi
+```{r verif}
+cat("Verifikasi Standarisasi pada Training Set:\n")
+cat("Target masih factor:", is.factor(training_scaled_logreg$`Gallstone Status`), "\n")
+cat("Mean Age setelah standarisasi:", round(mean(training_scaled_logreg$Age), 4), "\n")
+cat("SD Age setelah standarisasi:", round(sd(training_scaled_logreg$Age), 4), "\n")
+
+```
+
+### Training Model
+
+```{r logreg-model}
+# Bangun model regresi logistik
+model_logreg <- glm(
+  `Gallstone Status` ~ .,
+  data = training_scaled_logreg,
+  family = binomial
+)
+
+# Ringkasan model
+summary(model_logreg)
+```
+
+### Evaluasi pada Data Training
+
+```{r logreg-train-evaluation}
+# Prediksi probabilitas pada training
+probabilitas_prediksi_logreg_train <- predict(
+  model_logreg,
+  newdata = training_scaled_logreg,
+  type = "response"
+)
+
+# Kembalikan probabilitas ke biner
+prediksi_kelas_logreg_train <- ifelse(probabilitas_prediksi_logreg_train > 0.5, 1, 0)
+prediksi_kelas_logreg_train <- as.factor(prediksi_kelas_logreg_train)
+
+# Ground truth training
+ground_truth_train <- training_scaled_logreg$`Gallstone Status`
+
+# Confusion matrix training
+cm_logistik_train <- confusionMatrix(
+  data = prediksi_kelas_logreg_train,
+  reference = ground_truth_train,
+  positive = "1"
+)
+
+print(cm_logistik_train)
+
+# Metrik evaluasi training
+precision_logreg_train <- Precision(y_pred = prediksi_kelas_logreg_train, 
+                                    y_true = ground_truth_train, 
+                                    positive = "1")
+
+recall_logreg_train <- Recall(y_pred = prediksi_kelas_logreg_train, 
+                              y_true = ground_truth_train, 
+                              positive = "1")
+
+f1_logreg_train <- F1_Score(y_pred = prediksi_kelas_logreg_train, 
+                            y_true = ground_truth_train, 
+                            positive = "1")
+
+# Tampilkan metrik training
+logreg_metrics_train <- data.frame(
+  Metrik = c("Accuracy", "Precision", "Recall", "F1 Score"),
+  Nilai = c(cm_logistik_train$overall["Accuracy"], precision_logreg_train, recall_logreg_train, f1_logreg_train)
+)
+
+kable(logreg_metrics_train, 
+      caption = "Metrik Evaluasi Logistic Regression - Training Set",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+### Evaluasi pada Data Testing
+
+```{r logreg-prediction}
+# Prediksi probabilitas
+probabilitas_prediksi_logreg <- predict(
+  model_logreg,
+  newdata = testing_scaled_logreg,
+  type = "response"
+)
+
+# Kembalikan probabilitas ke biner
+prediksi_kelas_logreg <- ifelse(probabilitas_prediksi_logreg > 0.5, 1, 0)
+prediksi_kelas_logreg <- as.factor(prediksi_kelas_logreg)
+
+# Ground truth
+ground_truth <- testing_scaled_logreg$`Gallstone Status`
+
+# Confusion matrix
+cm_logistik <- confusionMatrix(
+  data = prediksi_kelas_logreg,
+  reference = ground_truth,
+  positive = "1"
+)
+
+print(cm_logistik)
+```
+
+### Metrik Evaluasi Logistic Regression - Testing
+
+```{r logreg-metrics}
+# Precision
+precision_logreg <- Precision(y_pred = prediksi_kelas_logreg, 
+                              y_true = ground_truth, 
+                              positive = "1")
+
+# Recall
+recall_logreg <- Recall(y_pred = prediksi_kelas_logreg, 
+                        y_true = ground_truth, 
+                        positive = "1")
+
+# F1 Score
+f1_logreg <- F1_Score(y_pred = prediksi_kelas_logreg, 
+                      y_true = ground_truth, 
+                      positive = "1")
+
+# Tampilkan metrik
+logreg_metrics <- data.frame(
+  Metrik = c("Accuracy", "Precision", "Recall", "F1 Score"),
+  Nilai = c(cm_logistik$overall["Accuracy"], precision_logreg, recall_logreg, f1_logreg)
+)
+
+kable(logreg_metrics, 
+      caption = "Metrik Evaluasi Logistic Regression - Testing Set",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+# Perbandingan Model
+
+## Perbandingan Training vs Testing - Decision Tree
+
+```{r dt-comparison}
+# Buat dataframe perbandingan
+dt_comparison <- data.frame(
+  Dataset = c("Training", "Testing"),
+  Accuracy = c(cm_dt_train$overall["Accuracy"], cm_dt$overall["Accuracy"]),
+  Precision = c(precision_dt_train, precision_dt),
+  Recall = c(recall_dt_train, recall_dt),
+  F1_Score = c(f1_dt_train, f1_dt)
+)
+
+kable(dt_comparison, 
+      caption = "Perbandingan Performa Decision Tree: Training vs Testing",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+```
+
+## Perbandingan Training vs Testing - Logistic Regression
+
+```{r logreg-comparison}
+# Buat dataframe perbandingan
+logreg_comparison <- data.frame(
+  Dataset = c("Training", "Testing"),
+  Accuracy = c(cm_logistik_train$overall["Accuracy"], cm_logistik$overall["Accuracy"]),
+  Precision = c(precision_logreg_train, precision_logreg),
+  Recall = c(recall_logreg_train, recall_logreg),
+  F1_Score = c(f1_logreg_train, f1_logreg)
+)
+
+kable(logreg_comparison, 
+      caption = "Perbandingan Performa Logistic Regression: Training vs Testing",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered"))
+```
+
+## Perbandingan Antar Model pada Testing Set
+
+```{r comparison-table}
+# Buat dataframe perbandingan
+perbandingan <- data.frame(
+  Model = c("Decision Tree", "Logistic Regression"),
+  Accuracy = c(cm_dt$overall["Accuracy"], cm_logistik$overall["Accuracy"]),
+  Precision = c(precision_dt, precision_logreg),
+  Recall = c(recall_dt, recall_logreg),
+  F1_Score = c(f1_dt, f1_logreg)
+)
+
+kable(perbandingan, 
+      caption = "Perbandingan Performa Model pada Testing Set",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered")) %>%
+  row_spec(which.max(perbandingan$Accuracy), bold = TRUE, background = "#d4edda") %>%
+  row_spec(which.max(perbandingan$F1_Score), bold = TRUE, background = "#d4edda")
+```
+
+## Visualisasi Perbandingan Testing Set
+
+```{r comparison-plot, fig.height=6}
+# Transform data untuk plotting
+perbandingan_long <- perbandingan %>%
+  pivot_longer(cols = -Model, names_to = "Metric", values_to = "Value")
+
+# Plot perbandingan
+ggplot(perbandingan_long, aes(x = Metric, y = Value, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = round(Value, 3)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            size = 3.5) +
+  labs(title = "Perbandingan Performa Model pada Testing Set",
+       subtitle = "Decision Tree vs Logistic Regression",
+       y = "Nilai",
+       x = "Metrik Evaluasi") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "bottom"
+  ) +
+  scale_fill_manual(values = c("Decision Tree" = "steelblue", 
+                                "Logistic Regression" = "darkgreen")) +
+  ylim(0, 1.1)
+```
+
+## Tabel Komprehensif Semua Metrik
+
+```{r comprehensive-table}
+# Buat tabel komprehensif
+comprehensive_metrics <- data.frame(
+  Model = c("Decision Tree", "Decision Tree", "Logistic Regression", "Logistic Regression"),
+  Dataset = c("Training", "Testing", "Training", "Testing"),
+  Accuracy = c(cm_dt_train$overall["Accuracy"], cm_dt$overall["Accuracy"],
+               cm_logistik_train$overall["Accuracy"], cm_logistik$overall["Accuracy"]),
+  Precision = c(precision_dt_train, precision_dt, precision_logreg_train, precision_logreg),
+  Recall = c(recall_dt_train, recall_dt, recall_logreg_train, recall_logreg),
+  F1_Score = c(f1_dt_train, f1_dt, f1_logreg_train, f1_logreg)
+)
+
+kable(comprehensive_metrics, 
+      caption = "Ringkasan Komprehensif Semua Metrik Evaluasi",
+      digits = 4) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "bordered")) %>%
+  pack_rows("Decision Tree", 1, 2) %>%
+  pack_rows("Logistic Regression", 3, 4)
+```
+
+## Visualisasi Perbandingan Training vs Testing
+
+```{r training-testing-comparison, fig.height=7}
+# Transform data untuk plotting
+comprehensive_long <- comprehensive_metrics %>%
+  pivot_longer(cols = c(Accuracy, Precision, Recall, F1_Score), 
+               names_to = "Metric", 
+               values_to = "Value")
+
+# Plot perbandingan training vs testing
+ggplot(comprehensive_long, aes(x = Metric, y = Value, fill = Dataset)) +
+  geom_bar(stat = "identity", position = "dodge", alpha = 0.8) +
+  geom_text(aes(label = round(Value, 3)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            size = 3) +
+  facet_wrap(~ Model, ncol = 2) +
+  labs(title = "Perbandingan Performa Training vs Testing untuk Setiap Model",
+       y = "Nilai",
+       x = "Metrik Evaluasi") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
+    legend.position = "bottom",
+    strip.text = element_text(face = "bold", size = 12)
+  ) +
+  scale_fill_manual(values = c("Training" = "#74c476", "Testing" = "#fd8d3c")) +
+  ylim(0, 1.1)
+```
+
+# Kesimpulan
+
+## Analisis Overfitting/Underfitting
+
+```{r overfitting-analysis}
+# Hitung selisih performa training-testing
+dt_diff <- dt_comparison$F1_Score[1] - dt_comparison$F1_Score[2]
+logreg_diff <- logreg_comparison$F1_Score[1] - logreg_comparison$F1_Score[2]
+
+cat("=== ANALISIS OVERFITTING/UNDERFITTING ===\n\n")
+
+cat("Decision Tree:\n")
+cat("- F1 Score Training:", round(dt_comparison$F1_Score[1], 4), "\n")
+cat("- F1 Score Testing:", round(dt_comparison$F1_Score[2], 4), "\n")
+cat("- Selisih (Training - Testing):", round(dt_diff, 4), "\n")
+if (dt_diff > 0.1) {
+  cat("- Status: OVERFITTING (model terlalu fit pada data training)\n\n")
+} else if (dt_diff < 0.05) {
+  cat("- Status: GENERALISASI BAIK\n\n")
+} else {
+  cat("- Status: OVERFITTING RINGAN\n\n")
+}
+
+cat("Logistic Regression:\n")
+cat("- F1 Score Training:", round(logreg_comparison$F1_Score[1], 4), "\n")
+cat("- F1 Score Testing:", round(logreg_comparison$F1_Score[2], 4), "\n")
+cat("- Selisih (Training - Testing):", round(logreg_diff, 4), "\n")
+if (logreg_diff > 0.1) {
+  cat("- Status: OVERFITTING (model terlalu fit pada data training)\n\n")
+} else if (logreg_diff < 0.05) {
+  cat("- Status: GENERALISASI BAIK\n\n")
+} else {
+  cat("- Status: OVERFITTING RINGAN\n\n")
+}
+```
+
+## Kesimpulan Akhir
+
+```{r conclusion}
+best_model <- perbandingan$Model[which.max(perbandingan$F1_Score)]
+best_f1 <- max(perbandingan$F1_Score)
+
+cat("\n=== KESIMPULAN AKHIR ===\n\n")
+
+cat("1. MODEL TERBAIK:\n")
+cat("   - Model:", best_model, "\n")
+cat("   - F1 Score (Testing):", round(best_f1, 4), "\n")
+cat("   - Accuracy (Testing):", round(perbandingan$Accuracy[perbandingan$Model == best_model], 4), "\n\n")
+
+cat("2. PERBANDINGAN PERFORMA:\n")
+cat("   Decision Tree:\n")
+cat("   - Performa Testing: Accuracy =", round(cm_dt$overall["Accuracy"], 4), 
+    "| F1 =", round(f1_dt, 4), "\n")
+cat("   - Gap Training-Testing:", round(dt_diff, 4), "\n\n")
+
+cat("   Logistic Regression:\n")
+cat("   - Performa Testing: Accuracy =", round(cm_logistik$overall["Accuracy"], 4), 
+    "| F1 =", round(f1_logreg, 4), "\n")
+cat("   - Gap Training-Testing:", round(logreg_diff, 4), "\n\n")
+
+cat("3. REKOMENDASI:\n")
+if (best_model == "Decision Tree") {
+  if (dt_diff > 0.1) {
+    cat("   - Model Decision Tree menunjukkan performa terbaik tetapi mengalami overfitting\n")
+    cat("   - Pertimbangkan pruning atau tuning hyperparameter untuk mengurangi overfitting\n")
+  } else {
+    cat("   - Model Decision Tree menunjukkan performa terbaik dengan generalisasi baik\n")
+    cat("   - Model ini direkomendasikan untuk deployment\n")
+  }
+} else {
+  if (logreg_diff > 0.1) {
+    cat("   - Model Logistic Regression menunjukkan performa terbaik tetapi mengalami overfitting\n")
+    cat("   - Pertimbangkan regularization (L1/L2) untuk mengurangi overfitting\n")
+  } else {
+    cat("   - Model Logistic Regression menunjukkan performa terbaik dengan generalisasi baik\n")
+    cat("   - Model ini direkomendasikan untuk deployment\n")
+  }
+}
+
+cat("\n4. CATATAN PENTING:\n")
+cat("   - Evaluasi pada training set penting untuk mendeteksi overfitting\n")
+cat("   - Model dengan gap kecil antara training-testing menunjukkan generalisasi lebih baik\n")
+cat("   - Pilih model berdasarkan keseimbangan antara performa dan generalisasi\n")
+```
