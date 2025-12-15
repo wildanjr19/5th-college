@@ -1,37 +1,40 @@
 # TBP
 # Kelompok 1
 
-# 1. Load library
+# 1. Load library dan data
 library(spatstat)
-
-# 2. Load data chorley
 data(chorley)
 
-# 3. Cek ringkasan data
-summary(chorley)
+# filter lung
+chorley_lung <- subset(chorley, marks == "lung")
 
-# Plot data secara keseluruhan
-plot(chorley, main = "Peta Persebaran Kasus Kanker Chorley")
+# ringkasan data
+summary(chorley_lung)
 
-# Plot dipisah berdasarkan jenis kanker (marks)
-plot(split(chorley), main = "Pemisahan Kasus: Larynx vs Lung")
+# visual
+plot(chorley_lung, 
+     main = "Peta Persebaran Kasus Kanker Paru (Lung Only)",
+     pch = 20, cols = "black") # pch 20 = titik bulat
 
-# Menambahkan lokasi insinerator (jika ingin melihat posisinya)
-plot(chorley$window, main = "Lokasi Insinerator")
-points(chorley, pch=3, cols="grey") # Titik kasus
-plot(chorley.extra$incin, add=TRUE, pch=19, col="red", cex=1.5) # Titik insinerator
+# Menambahkan lokasi insinerator (Penting untuk melihat konteks spasial)
+plot(chorley.extra$incin, add=TRUE, pch=19, col="red", cex=1.5)
+legend("topleft", legend=c("Kasus Lung", "Insinerator"), 
+       col=c("black", "red"), pch=c(20, 19), cex=0.8)
 
-# Menghitung density
-KDE <- density(chorley)
+# KDE
+KDE_lung <- density(chorley_lung)
 
 # Plot density
-plot(KDE, main = "Peta Densitas Kernel (Semua Kasus)")
-contour(KDE, add=TRUE) # Menambahkan garis kontur
+plot(KDE_lung, main = "Peta Densitas Kernel (Khusus Lung)")
+contour(KDE_lung, add=TRUE) # Menambahkan garis kontur
+points(chorley.extra$incin, pch=19, col="white") # Menandai insinerator di peta density
 
-# Melakukan Quadrat Test (membagi area menjadi grid 5x5)
-Q_test <- quadrat.test(chorley, nx=5, ny=5)
-print(Q_test)
+# quadrat test
+Q_test_lung <- quadrat.test(chorley_lung, nx=7, ny=7)
+
+# Tampilkan hasil statistik (Lihat p-value)
+print(Q_test_lung)
 
 # Visualisasi hasil test
-plot(Q_test, main = "Quadrat Test: Observed vs Expected")
-plot(chorley, add=TRUE, col="red", pch=".")
+plot(Q_test_lung, main = "Quadrat Test (Lung): Observed vs Expected")
+plot(chorley_lung, add=TRUE, col="red", pch=".", cex=0.6)
