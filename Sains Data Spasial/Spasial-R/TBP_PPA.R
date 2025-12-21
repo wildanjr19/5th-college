@@ -1,7 +1,7 @@
 # TBP
 # Kelompok 1
 
-# 1. Load library dan data
+# Load library dan data
 library(spatstat)
 data(chorley)
 
