@@ -17,7 +17,7 @@ Analisis tahan hidup atau Survival Analysis mempelejari tentang ketahanan hidup,
 ## Pengantar Data Mining (Introduction to Data Mining)
 Pengantar Data Mining mempelajari mengenai algoritma-algoritma machine learning, terutama supervised dan unsupervised learning. Selain itu mata kuliah ini juga mempelajari teknik evaluasi pada kasus klasifikasi, menguji generalisasi model, dan tuning hyperparameter. Mata kuliah ini menghasilkan luaran dua artikel dan proyek. Artikel pertama mengenai klasifikasi menggunakan algoritma KNN, Random Forest, dan XGBoost. Kemudian artikel kedua mengenai unsupervised learniing yaitu tugas klastering menggunakan metode K-Means, GMM, dan DBSCAN.  
 **File & Dokumentasi Proyek**
-- 📊 []
+- 📊 [Klasifikasi Kebangkrutan Perusahaan Berbasis Algoritma Xgboost dengan Penanganan Imbalance Data Menggunakan Metode SMOTE-Tomek](./Pengantar%20Data%20Mining/PDM-R/TBP/TBP-KelompokF.R)
 - 📊 [Klasteritasi Dampak Bencana Banjir di Indonesia Menggunakan Metode K-Means, GMM, dan DBSCAN](./Pengantar%20Data%20Mining/Final%20Project/Final_Project.ipynb)
 
 ## Manajemen Big Data (Big Data Management)
