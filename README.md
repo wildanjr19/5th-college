@@ -25,3 +25,8 @@ Manajemen Big Data memperdalam mengenai teknik-teknik pemrosesan data. Data yang
 **File & Dokumentasi Proyek**
 - 📊 [Image Preprocessing](./Manajemen%20Big%20Data/Final%20Project/MBD_C_Kelompok%205_Image%20Preprocessing.ipynb)
 - 📊 [Text Preprocessing](./Manajemen%20Big%20Data/Final%20Project/MBD_C_Kelompok%205_Text%20Preprocessing.ipynb)
+
+## Sains Data Spasial (Spatial Data Science)
+Mempelajari mengenai eksplorasi pada data spasial, meliputi autokorelasi lokal dan global, analisis pola titik
+**File & Dokumentasi Proyek**
+- 📊 [Point Pattern Analysis Pada Data Penyakit Kanker di Chorley Ares](./Sains%20Data%20Spasial/Spasial-R/TBP_PPA_Kelompok%201.R)
